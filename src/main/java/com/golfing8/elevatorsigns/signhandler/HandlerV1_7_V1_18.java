@@ -5,6 +5,8 @@ import com.golfing8.elevatorsigns.ElevatorSignsRevamped;
 import com.golfing8.elevatorsigns.Version;
 import org.bukkit.ChatColor;
 import org.bukkit.block.Sign;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockDamageEvent;
 import org.bukkit.event.block.SignChangeEvent;
 import org.bukkit.event.EventHandler;
 import org.bukkit.Location;
@@ -41,6 +43,15 @@ public class HandlerV1_7_V1_18 extends SignHandler
             return;
         }
 
+        //The elevator is out of lives and on a cooldown, it can't be used for now.
+        if (this.livesEnabled) {
+            double cooldownLeft = this.getElevatorCooldownLeft(clickedBlock);
+            if (cooldownLeft > 0.0) {
+                this.msg(player, this.livesCooldownMessage(cooldownLeft));
+                return;
+            }
+        }
+
         Location toTeleportTo = this.getLocation(signInfo);
         if (toTeleportTo == null) {
             this.msg(player, this.invalidLocationMessage);
@@ -52,6 +63,22 @@ public class HandlerV1_7_V1_18 extends SignHandler
         player.teleport(toTeleportTo);
         this.msg(player, this.useMessage);
         this.sendSound(player, this.onUseSound);
+    }
+
+    @EventHandler
+    public void onBlockDamage(BlockDamageEvent e) {
+        //Each hit takes one life off of the elevator. As long as it has lives, it can't break normally.
+        if (this.livesEnabled && this.hitElevator(e.getPlayer(), e.getBlock())) {
+            e.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onBlockBreak(BlockBreakEvent e) {
+        //Only stop players from breaking an elevator that still has lives. Explosions and the like go through.
+        if (this.livesEnabled && e.getPlayer() != null && this.protectElevator(e.getPlayer(), e.getBlock())) {
+            e.setCancelled(true);
+        }
     }
     
     @EventHandler

@@ -12,6 +12,11 @@ import org.bukkit.material.Openable;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Collection;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.Bukkit;
 import org.bukkit.scheduler.BukkitRunnable;
 import com.golfing8.elevatorsigns.Color;
@@ -29,6 +34,8 @@ public abstract class SignHandler implements Listener, CommandExecutor
 {
     private Plugin plugin;
     private Set<UUID> recentTries;
+    //Keyed by world,x,y,z of the sign block. Only lives in memory, cleared on restart.
+    private final Map<String, ElevatorLife> elevatorLives = new HashMap<String, ElevatorLife>();
     private ConfigManager configManager;
     @Configurable(path = "messages.", name = "use")
     protected String useMessage;
@@ -64,6 +71,22 @@ public abstract class SignHandler implements Listener, CommandExecutor
     protected boolean floorsEnabled;
     @Configurable(name = "max-distance-away")
     protected double maxDistance;
+    @Configurable(path = "lives.", name = "enabled")
+    protected boolean livesEnabled;
+    @Configurable(path = "lives.", name = "amount")
+    protected int livesAmount;
+    @Configurable(path = "lives.", name = "break-on-empty")
+    protected boolean livesBreakOnEmpty;
+    @Configurable(path = "lives.", name = "cooldown-seconds")
+    protected int livesCooldownSeconds;
+    @Configurable(path = "lives.", name = "regenerate-seconds")
+    protected int livesRegenerateSeconds;
+    @Configurable(path = "messages.", name = "lives-remaining")
+    protected String livesRemainingMessage;
+    @Configurable(path = "messages.", name = "lives-broken")
+    protected String livesBrokenMessage;
+    @Configurable(path = "messages.", name = "lives-cooldown")
+    protected String livesCooldownMessage;
     
     protected void sendSound(Player player, String sound) {
         if (sound == null || sound.isEmpty()) {
@@ -95,11 +118,21 @@ public abstract class SignHandler implements Listener, CommandExecutor
             }
         }.runTaskTimer(this.plugin, 0L, 20L);
     }
+
+    //Regenerates the lives of the elevators that have been hit, once every full second.
+    private void runLivesTask() {
+        new BukkitRunnable() {
+            public void run() {
+                SignHandler.this.regenerateElevatorLives();
+            }
+        }.runTaskTimer(this.plugin, 0L, 20L);
+    }
     
     public SignHandler(Plugin plugin) {
         Bukkit.getServer().getPluginManager().registerEvents(this, plugin);
         this.plugin = plugin;
         this.runTask();
+        this.runLivesTask();
         this.configManager = new ConfigManager(this, plugin);
         this.recentTries = new HashSet<UUID>();
         this.configManager.reloadConfig();
@@ -273,7 +306,195 @@ public abstract class SignHandler implements Listener, CommandExecutor
         }
         return toReturn;
     }
-    
+
+    /**
+     * Checks if the block provided is an elevator sign.
+     * @param block the block to check.
+     * @return true if the block is an elevator sign, false if not.
+     */
+    protected boolean isElevatorSign(Block block) {
+        if (block == null || !block.getType().toString().contains("SIGN")) {
+            return false;
+        }
+        Sign sign;
+        try {
+            sign = (Sign) block.getState();
+        }
+        catch (ClassCastException ex) {
+            return false;
+        }
+        try {
+            new SignInfo(sign, this.floorsEnabled);
+            return true;
+        }
+        catch (IllegalStateException | IllegalArgumentException ex) {
+            return false;
+        }
+    }
+
+    /**
+     * Formats the 'lives-remaining' message, telling the player how many hits are left.
+     * @param lives the lives currently left on the elevator.
+     * @return the formatted message.
+     */
+    protected String livesRemainingMessage(int lives) {
+        return this.livesRemainingMessage
+            .replace("%lives", String.valueOf(lives))
+            .replace("%max", String.valueOf(this.getMaxLives()));
+    }
+
+    /**
+     * Formats the 'lives-cooldown' message, telling the player how long the elevator is out.
+     * @param seconds the seconds the elevator is out of commission.
+     * @return the formatted message.
+     */
+    protected String livesCooldownMessage(double seconds) {
+        return this.livesCooldownMessage
+            .replace("%seconds", String.valueOf((int) Math.ceil(seconds)));
+    }
+
+    /**
+     * Gets the maximum amount of lives an elevator can have.
+     * @return the maximum lives.
+     */
+    protected int getMaxLives() {
+        return Math.max(1, this.livesAmount);
+    }
+
+    /**
+     * Gets the key we store an elevator's life information under.
+     * @param block the sign block.
+     * @return the unique key for the sign block's location.
+     */
+    private String lifeKey(Block block) {
+        return block.getWorld().getName() + "," + block.getX() + "," + block.getY() + "," + block.getZ();
+    }
+
+    /**
+     * Gets the life information for the sign, creating it if it doesn't exist yet.
+     * @param block the sign block.
+     * @return the (never null) life information of the sign.
+     */
+    private ElevatorLife getOrCreateLife(Block block) {
+        return this.elevatorLives.computeIfAbsent(this.lifeKey(block), key -> new ElevatorLife());
+    }
+
+    /**
+     * Handles a hit on an elevator sign, taking one life off of it.
+     * @param player the player that hit the sign.
+     * @param block the sign that was hit.
+     * @return true if this hit was counted, so the sign should not break normally.
+     */
+    protected boolean hitElevator(Player player, Block block) {
+        if (!this.isElevatorSign(block)) {
+            return false;
+        }
+        ElevatorLife life = this.getOrCreateLife(block);
+        long now = System.currentTimeMillis();
+        //The elevator is on a cooldown right now, it can't be hit again until it's back.
+        if (life.blockedUntil > now) {
+            this.msg(player, this.livesCooldownMessage((life.blockedUntil - now) / 1000.0));
+            return true;
+        }
+        --life.lives;
+        life.lastHit = now;
+        //Still has lives left.
+        if (life.lives > 0) {
+            this.msg(player, this.livesRemainingMessage(life.lives));
+            return true;
+        }
+        //Out of lives. If we don't break, the elevator goes on a cooldown instead.
+        if (!this.livesBreakOnEmpty) {
+            life.blockedUntil = now + (this.livesCooldownSeconds * 1000L);
+            this.msg(player, this.livesCooldownMessage(this.livesCooldownSeconds));
+            return true;
+        }
+        this.msg(player, this.livesBrokenMessage);
+        this.elevatorLives.remove(this.lifeKey(block));
+        this.breakElevator(block);
+        return true;
+    }
+
+    /**
+     * Stops an elevator sign from being broken normally while it still has lives left.
+     * @param player the player trying to break the sign, null if it wasn't a player.
+     * @param block the sign being broken.
+     * @return true if the break should be cancelled, false if it should go through.
+     */
+    protected boolean protectElevator(Player player, Block block) {
+        if (!this.isElevatorSign(block)) {
+            return false;
+        }
+        ElevatorLife life = this.elevatorLives.get(this.lifeKey(block));
+        int lives = (life == null ? this.getMaxLives() : life.lives);
+        //Out of lives, the sign is fair game to break.
+        if (lives <= 0) {
+            return false;
+        }
+        if (player != null) {
+            this.msg(player, this.livesRemainingMessage(lives));
+        }
+        return true;
+    }
+
+    /**
+     * Gets the seconds left on an elevator's cooldown.
+     * @param block the sign to check.
+     * @return the seconds left, or 0 if the elevator isn't on a cooldown.
+     */
+    protected double getElevatorCooldownLeft(Block block) {
+        ElevatorLife life = this.elevatorLives.get(this.lifeKey(block));
+        if (life == null) {
+            return 0.0;
+        }
+        return Math.max(0.0, (life.blockedUntil - System.currentTimeMillis()) / 1000.0);
+    }
+
+    /**
+     * Breaks the elevator sign and drops it on the ground.
+     * @param block the sign to break.
+     */
+    private void breakElevator(Block block) {
+        for (ItemStack drop : block.getDrops()) {
+            block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), drop);
+        }
+        block.setType(Material.AIR);
+    }
+
+    /**
+     * Gives lives back to the elevators that have been hit, and brings back the ones on a cooldown.
+     * Called once every second.
+     */
+    private void regenerateElevatorLives() {
+        if (!this.livesEnabled || this.elevatorLives.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        int maxLives = this.getMaxLives();
+        Iterator<Map.Entry<String, ElevatorLife>> iterator = this.elevatorLives.entrySet().iterator();
+        while (iterator.hasNext()) {
+            ElevatorLife life = iterator.next().getValue();
+            //On a cooldown. It gets all of its lives back once the cooldown is over.
+            if (life.blockedUntil > 0L) {
+                if (now >= life.blockedUntil) {
+                    life.blockedUntil = 0L;
+                    life.lives = maxLives;
+                    life.lastHit = now;
+                }
+                continue;
+            }
+            //At full lives, nothing left to track.
+            if (life.lives >= maxLives) {
+                iterator.remove();
+                continue;
+            }
+            if (now - life.lastHit >= (this.livesRegenerateSeconds * 1000L)) {
+                ++life.lives;
+                life.lastHit = now;
+            }
+        }
+    }
+
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         //No permission to reload
         if (!sender.hasPermission(this.reloadPermission)) {
@@ -338,6 +559,21 @@ public abstract class SignHandler implements Listener, CommandExecutor
     {
         UP, 
         DOWN;
+    }
+
+    /**
+     * Holds the lives of a single elevator sign. This is only kept in memory, so every elevator
+     * goes back to full lives when the server restarts.
+     */
+    protected class ElevatorLife
+    {
+        private int lives;
+        private long lastHit;
+        private long blockedUntil;
+
+        public ElevatorLife() {
+            this.lives = getMaxLives();
+        }
     }
 }
  
