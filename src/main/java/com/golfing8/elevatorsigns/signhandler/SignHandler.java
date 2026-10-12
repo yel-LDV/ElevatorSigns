@@ -36,6 +36,7 @@ public abstract class SignHandler implements Listener, CommandExecutor
     //Keyed by world,x,y,z of the sign block. Only lives in memory, cleared on restart.
     private final Map<String, ElevatorLife> elevatorLives = new HashMap<String, ElevatorLife>();
     private ConfigManager configManager;
+    // two messages (down and up)
     @Configurable(path = "messages.use.", name = "up")
     protected String useMessageUp;
     @Configurable(path = "messages.use.", name = "down")
