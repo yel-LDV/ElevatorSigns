@@ -15,7 +15,6 @@ import java.util.HashSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.Collection;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.Bukkit;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -37,8 +36,10 @@ public abstract class SignHandler implements Listener, CommandExecutor
     //Keyed by world,x,y,z of the sign block. Only lives in memory, cleared on restart.
     private final Map<String, ElevatorLife> elevatorLives = new HashMap<String, ElevatorLife>();
     private ConfigManager configManager;
-    @Configurable(path = "messages.", name = "use")
-    protected String useMessage;
+    @Configurable(path = "messages.use.", name = "up")
+    protected String useMessageUp;
+    @Configurable(path = "messages.use.", name = "down")
+    protected String useMessageDown;
     @Configurable(path = "messages.", name = "create")
     protected String createMessage;
     @Configurable(path = "sounds.", name = "use")

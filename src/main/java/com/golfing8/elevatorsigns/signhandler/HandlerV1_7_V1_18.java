@@ -61,7 +61,11 @@ public class HandlerV1_7_V1_18 extends SignHandler
         toTeleportTo.setYaw(player.getLocation().getYaw());
         toTeleportTo.setPitch(player.getLocation().getPitch());
         player.teleport(toTeleportTo);
-        this.msg(player, this.useMessage);
+        if(signInfo.getDirection() == Direction.DOWN){
+            this.msg(player, this.useMessageDown);
+        }else{
+            this.msg(player, this.useMessageUp);
+        }
         this.sendSound(player, this.onUseSound);
     }
 

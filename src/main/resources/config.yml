@@ -1,5 +1,7 @@
 messages:
-  use: '&7&oWhoosh!'
+  use:
+    up: '&7&oWhoosh!'
+    down: '&7&oWhoosh!'
   create: '&bSuccessfully created an elevator!'
   invalid-location: '&cCouldn''t find a suitable location to teleport to!'
   invalid-sign: '&cYour sign wasn''t formatted correctly! Make sure to specify only up or down!'
@@ -12,7 +14,8 @@ sounds:
   use: 'ANVIL_LAND:0.5:0.5'
   create: 'ANVIL_USE:1.0:2.0'
 permissions:
-  use: 'elevatorsigns.use'
+  use-up: 'elevatorsigns.use.up'
+  use-down: 'elevatorsigns.use.down'
   create: 'elevatorsigns.create'
   reload: 'elevatorsigns.reload'
 floors-enabled: true
